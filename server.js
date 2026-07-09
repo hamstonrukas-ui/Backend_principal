@@ -1216,6 +1216,77 @@ app.get('/api/admin/translations/export', async (req, res) => {
   }
 });
 
+
+// ... tout votre code existant ...
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PROXY BIBLIOTHÈQUE — Render → AeonFree
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const AEONFREE_URL = 'http://kivirafacile.hstn.me/api/library_api.php';
+
+app.get('/api/library/categories', async (req, res) => {
+  try {
+    const lang = req.query.lang || 'fr';
+    const response = await fetch(`${AEONFREE_URL}?action=categories&lang=${lang}`);
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/library/titles', async (req, res) => {
+  try {
+    const { category_id, lang = 'fr' } = req.query;
+    if (!category_id) return res.status(400).json({ error: 'category_id requis' });
+    const response = await fetch(`${AEONFREE_URL}?action=titles&category_id=${category_id}&lang=${lang}`);
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/library/articles', async (req, res) => {
+  try {
+    const { title_id, lang = 'fr' } = req.query;
+    if (!title_id) return res.status(400).json({ error: 'title_id requis' });
+    const response = await fetch(`${AEONFREE_URL}?action=articles&title_id=${title_id}&lang=${lang}`);
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/library/article', async (req, res) => {
+  try {
+    const { id, lang = 'fr' } = req.query;
+    if (!id) return res.status(400).json({ error: 'id requis' });
+    const response = await fetch(`${AEONFREE_URL}?action=article&id=${id}&lang=${lang}`);
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/dictionary/search', async (req, res) => {
+  try {
+    const { q, lang = 'fr' } = req.query;
+    if (!q) return res.status(400).json({ error: 'Paramètre q requis' });
+    const response = await fetch(`http://kivirafacile.hstn.me/api/dictionary.php?action=search&q=${encodeURIComponent(q)}&lang=${lang}`);
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ← ICI SE TERMINE LE PROXY
+
+
 // ===== DÉMARRAGE =====
 const PORT = process.env.PORT || 5000;
 
