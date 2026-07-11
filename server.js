@@ -461,13 +461,29 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
       premiumExpiresAt = null;
     }
 
+    // Vérifier expiration premium traduction
+    let isTranslationPremium = user.istranslationpremium;
+    let translationPremiumExpiresAt = user.translationpremiumexpiresat;
+
+    if (translationPremiumExpiresAt && new Date() > new Date(translationPremiumExpiresAt)) {
+      await pool.query(
+        'UPDATE users SET isTranslationPremium = $1, translationPremiumExpiresAt = $2 WHERE uuid = $3',
+        [false, null, user.uuid]
+      );
+      isTranslationPremium = false;
+      translationPremiumExpiresAt = null;
+    }
+
     res.json({
+      
       uuid: user.uuid,
       name: user.name,
       email: user.email,
       isPremium,
       premiumExpiresAt,
-      isBlocked: user.isblocked
+      isBlocked: user.isblocked,
+      isTranslationPremium,
+      translationPremiumExpiresAt
     });
   } catch (error) {
     console.error('Erreur /api/auth/me:', error);
@@ -593,56 +609,40 @@ app.post('/api/payments/submit', authenticateToken, async (req, res) => {
       });
     }
 
-    // Créer le paiement
+    
+
+  // Récupérer productType depuis le body (general ou translation)
+    const productType = req.body.productType === 'translation' ? 'translation' : 'general';
+    const amount = productType === 'translation' ? '2000' : PAYMENT_CONFIG.amount;
+
     const paymentUuid = uuidv4();
 
     await pool.query(
-      `INSERT INTO payments (paymentUuid, userUuid, userName, userEmail,
-                            transactionId, phoneNumber, operator, amount, currency,
-                            status, deviceFingerprint, submittedAt, validatedAt)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-      [paymentUuid, user.uuid, user.name, user.email,
-       transactionId.trim(), phoneNumber.trim(), operator,
-       PAYMENT_CONFIG.amount, PAYMENT_CONFIG.currency,
-       'PENDING', deviceFingerprint, new Date(), null]
+        `INSERT INTO payments (paymentUuid, userUuid, userName, userEmail,
+                              transactionId, phoneNumber, operator, amount, currency,
+                              status, deviceFingerprint, submittedAt, validatedAt, productType)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        [paymentUuid, user.uuid, user.name, user.email,
+         transactionId.trim(), phoneNumber.trim(), operator,
+         amount, PAYMENT_CONFIG.currency,
+         'PENDING', deviceFingerprint, new Date(), null, productType]
     );
 
-    // Premium temporaire
+    // Premium temporaire selon le type
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + PAYMENT_CONFIG.temporaryPremiumDuration);
 
-    await pool.query(
-      'UPDATE users SET isPremium = $1, premiumExpiresAt = $2 WHERE uuid = $3',
-      [true, expiresAt, user.uuid]
-    );
-
-    console.log(`💳 Nouveau paiement soumis:`, {
-      paymentUuid,
-      userUuid: user.uuid,
-      transactionId: transactionId.trim(),
-      phoneNumber: phoneNumber.trim()
-    });
-
-    res.json({
-      message: 'Transaction ID soumis avec succès !',
-      payment: {
-        uuid: paymentUuid,
-        status: 'PENDING',
-        submittedAt: new Date()
-      },
-      premium: {
-        isTemporary: true,
-        expiresAt,
-        message: `Vous avez un accès premium temporaire de ${PAYMENT_CONFIG.temporaryPremiumDuration}h pendant que nous vérifions votre paiement.`
+    if (productType === 'translation') {
+      await pool.query(
+        'UPDATE users SET isTranslationPremium = $1, translationPremiumExpiresAt = $2 WHERE uuid = $3',
+        [true, expiresAt, user.uuid]
+      );
+    } else {
+      await pool.query(
+        'UPDATE users SET isPremium = $1, premiumExpiresAt = $2 WHERE uuid = $3',
+        [true, expiresAt, user.uuid]
+      );
       }
-    });
-
-  } catch (error) {
-    console.error('Erreur soumission paiement:', error);
-    res.status(500).json({ error: 'Erreur lors de la soumission.' });
-  }
-});
-
 // ===== ROUTES ADMIN =====
 
 app.get('/api/admin/payments', async (req, res) => {
@@ -748,10 +748,18 @@ app.post('/api/admin/payments/:id/approve', async (req, res) => {
       ['APPROVED', new Date(), paymentId]
     );
 
-    await pool.query(
-      'UPDATE users SET isPremium = $1, premiumExpiresAt = $2 WHERE uuid = $3',
-      [true, null, payment.useruuid]
-    );
+    // Activer le bon premium selon le type de produit payé
+    if (payment.producttype === 'translation') {
+      await pool.query(
+        'UPDATE users SET isTranslationPremium = $1, translationPremiumExpiresAt = $2 WHERE uuid = $3',
+        [true, null, payment.useruuid]
+      );
+    } else {
+      await pool.query(
+        'UPDATE users SET isPremium = $1, premiumExpiresAt = $2 WHERE uuid = $3',
+        [true, null, payment.useruuid]
+      );
+    }
 
     console.log(`✅ Paiement ${paymentId} approuvé - User ${payment.useruuid} est maintenant premium PERMANENT`);
 
