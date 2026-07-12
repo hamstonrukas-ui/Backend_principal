@@ -643,6 +643,31 @@ app.post('/api/payments/submit', authenticateToken, async (req, res) => {
         [true, expiresAt, user.uuid]
       );
       }
+
+    console.log(`💳 Paiement soumis: ${productType} - ${amount} FC - User: ${user.uuid}`);
+
+    res.json({
+      message: 'Transaction ID soumis avec succès !',
+      payment: {
+        uuid: paymentUuid,
+        status: 'PENDING',
+        submittedAt: new Date(),
+        productType: productType
+      },
+      premium: {
+        isTemporary: true,
+        expiresAt,
+        message: `Accès temporaire activé (${PAYMENT_CONFIG.temporaryPremiumDuration}h)`
+      }
+    });
+
+  } catch (error) {
+    console.error('Erreur soumission paiement:', error);
+    res.status(500).json({ error: 'Erreur lors de la soumission.' });
+  }
+});
+
+// ===== ROUTES ADMIN =====
 // ===== ROUTES ADMIN =====
 
 app.get('/api/admin/payments', async (req, res) => {
