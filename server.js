@@ -540,23 +540,17 @@ app.post('/api/payments/submit', authenticateToken, async (req, res) => {
       });
     }
 
-    // PROTECTION: Numéro bloqué
-    if (await isPhoneBlocked(phoneNumber)) {
-      await pool.query(
-        'UPDATE users SET isBlocked = $1 WHERE uuid = $2',
-        [true, user.uuid]
-      );
-
-      if (deviceFingerprint) {
-        await blockDevice(deviceFingerprint, 'Numéro bloqué utilisé');
+    
+    // PROTECTION: Numéro bloqué (seulement si explicitement bloqué par admin pour fraude)
+// Un numéro peut payer plusieurs fois légitimement (abonnement général + traduction)
+if (await isPhoneBlocked(phoneNumber)) {
+    console.log(`⚠️ Numéro bloqué tente un paiement: ${phoneNumber}`);
+    return res.status(403).json({
+        error: 'Ce numéro de téléphone a été signalé. Contactez le support.'
+    });
+    // Note: on NE bloque plus le compte automatiquement
+    // Un admin a explicitement bloqué ce numéro → juste refuser, pas bloquer le compte
       }
-
-      console.log(`🚨 FRAUDE: User ${user.uuid} a tenté d'utiliser un numéro bloqué: ${phoneNumber}`);
-
-      return res.status(403).json({
-        error: 'Ce numéro de téléphone a été bloqué pour fraude. Votre compte et appareil sont maintenant bloqués.'
-      });
-    }
 
     // PROTECTION: Limite paiements par heure
     if (!await checkPaymentRateLimit(user.uuid)) {
@@ -586,8 +580,9 @@ app.post('/api/payments/submit', authenticateToken, async (req, res) => {
         [true, false, existingPayment.useruuid]
       );
 
-      await blockPhoneNumber(phoneNumber, 'Transaction ID réutilisé');
-      await blockPhoneNumber(existingPayment.phonenumber, 'Transaction ID réutilisé');
+      // On bloque UNIQUEMENT les comptes et appareils, PAS les numéros
+// Le numéro peut appartenir à quelqu'un d'honnête qui s'est fait voler son Transaction ID
+console.log(`🚨 Transaction ID frauduleux - numéros concernés: ${phoneNumber} / ${existingPayment.phonenumber}`);
 
       if (deviceFingerprint) {
         await blockDevice(deviceFingerprint, 'Transaction ID réutilisé');
