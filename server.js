@@ -1313,6 +1313,266 @@ app.get('/api/dictionary/search', async (req, res) => {
 });
 
 // ← ICI SE TERMINE LE PROXY
+// ═══════════════════════════════════════════════════════════
+// ROUTES BIBLIOTHÈQUE + DICTIONNAIRE — À ajouter dans server.js
+// Placez ce bloc juste avant initStorage().then(...)
+// ═══════════════════════════════════════════════════════════
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BIBLIOTHÈQUE — 3 niveaux : Catégories → Titres → Articles
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// GET /api/library/categories
+app.get('/api/library/categories', async (req, res) => {
+  try {
+    const lang = req.query.lang || 'fr';
+    const allowed = ['fr', 'en', 'sw', 'ki'];
+    const l = allowed.includes(lang) ? lang : 'fr';
+
+    const result = await pool.query(`
+      SELECT
+        id, slug, icon, display_order,
+        title_${l} AS name
+      FROM lib_categories
+      WHERE is_visible = true
+      ORDER BY display_order ASC
+    `);
+
+    res.json({ success: true, categories: result.rows });
+  } catch (err) {
+    console.error('Erreur /api/library/categories:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/library/titles?category_id=1&lang=fr
+app.get('/api/library/titles', async (req, res) => {
+  try {
+    const { category_id, lang = 'fr' } = req.query;
+    const allowed = ['fr', 'en', 'sw', 'ki'];
+    const l = allowed.includes(lang) ? lang : 'fr';
+
+    if (!category_id) {
+      return res.status(400).json({ success: false, error: 'category_id requis' });
+    }
+
+    // Récupérer la catégorie
+    const catResult = await pool.query(
+      `SELECT id, slug, title_${l} AS name, icon FROM lib_categories WHERE id = $1 AND is_visible = true`,
+      [category_id]
+    );
+    if (catResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Catégorie introuvable' });
+    }
+
+    // Récupérer les titres
+    const titlesResult = await pool.query(`
+      SELECT id, slug, display_order, title_${l} AS name
+      FROM lib_titles
+      WHERE category_id = $1 AND is_visible = true
+      ORDER BY display_order ASC
+    `, [category_id]);
+
+    res.json({
+      success: true,
+      category: catResult.rows[0],
+      titles: titlesResult.rows
+    });
+  } catch (err) {
+    console.error('Erreur /api/library/titles:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/library/articles?title_id=1&lang=fr
+app.get('/api/library/articles', async (req, res) => {
+  try {
+    const { title_id, lang = 'fr' } = req.query;
+    const allowed = ['fr', 'en', 'sw', 'ki'];
+    const l = allowed.includes(lang) ? lang : 'fr';
+
+    if (!title_id) {
+      return res.status(400).json({ success: false, error: 'title_id requis' });
+    }
+
+    // Récupérer le titre
+    const titleResult = await pool.query(
+      `SELECT t.id, t.slug, t.title_${l} AS name, c.title_${l} AS category_name, c.id AS category_id
+       FROM lib_titles t
+       JOIN lib_categories c ON c.id = t.category_id
+       WHERE t.id = $1 AND t.is_visible = true`,
+      [title_id]
+    );
+    if (titleResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Titre introuvable' });
+    }
+
+    // Récupérer les articles
+    const articlesResult = await pool.query(`
+      SELECT
+        id, slug, display_order, author, published_at,
+        article_title_${l} AS title,
+        content_${l}        AS content
+      FROM lib_articles
+      WHERE title_id = $1 AND is_visible = true
+      ORDER BY display_order ASC
+    `, [title_id]);
+
+    res.json({
+      success: true,
+      title: titleResult.rows[0],
+      articles: articlesResult.rows
+    });
+  } catch (err) {
+    console.error('Erreur /api/library/articles:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/library/article?id=1&lang=fr
+app.get('/api/library/article', async (req, res) => {
+  try {
+    const { id, lang = 'fr' } = req.query;
+    const allowed = ['fr', 'en', 'sw', 'ki'];
+    const l = allowed.includes(lang) ? lang : 'fr';
+
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'id requis' });
+    }
+
+    const result = await pool.query(`
+      SELECT
+        a.id, a.slug, a.author, a.published_at,
+        a.article_title_${l} AS title,
+        a.content_${l}        AS content,
+        t.title_${l}          AS title_name,
+        t.id                  AS title_id,
+        c.title_${l}          AS category_name,
+        c.id                  AS category_id
+      FROM lib_articles a
+      JOIN lib_titles t     ON t.id = a.title_id
+      JOIN lib_categories c ON c.id = t.category_id
+      WHERE a.id = $1 AND a.is_visible = true
+      LIMIT 1
+    `, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Article introuvable' });
+    }
+
+    res.json({ success: true, article: result.rows[0] });
+  } catch (err) {
+    console.error('Erreur /api/library/article:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// DICTIONNAIRE — Recherche multilingue
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// GET /api/dictionary/search?q=bonjour&lang=fr
+app.get('/api/dictionary/search', async (req, res) => {
+  try {
+    const { q, lang = 'fr', limit = 20 } = req.query;
+
+    if (!q || !q.trim()) {
+      return res.status(400).json({ success: false, error: 'Paramètre q requis' });
+    }
+
+    const search = '%' + q.trim() + '%';
+    const lim = Math.min(parseInt(limit) || 20, 50);
+
+    // Recherche selon la langue source
+    const result = await pool.query(`
+      SELECT
+        id, kivira, french, english, swahili,
+        category, type,
+        example_kivira,
+        example_translation_fr,
+        example_translation_en,
+        example_translation_sw
+      FROM dictionary
+      WHERE
+        kivira  ILIKE $1 OR
+        french  ILIKE $1 OR
+        english ILIKE $1 OR
+        swahili ILIKE $1
+      ORDER BY
+        CASE
+          WHEN kivira  ILIKE $2 THEN 1
+          WHEN french  ILIKE $2 THEN 2
+          WHEN english ILIKE $2 THEN 3
+          ELSE 4
+        END,
+        LENGTH(kivira) ASC
+      LIMIT $3
+    `, [search, q.trim(), lim]);
+
+    res.json({
+      success: true,
+      query: q,
+      count: result.rows.length,
+      results: result.rows
+    });
+  } catch (err) {
+    console.error('Erreur /api/dictionary/search:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/dictionary/word?kivira=Mwana
+app.get('/api/dictionary/word', async (req, res) => {
+  try {
+    const { kivira } = req.query;
+    if (!kivira) {
+      return res.status(400).json({ success: false, error: 'Paramètre kivira requis' });
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM dictionary WHERE kivira ILIKE $1 LIMIT 1',
+      [kivira]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Mot introuvable' });
+    }
+
+    res.json({ success: true, word: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/dictionary/categories
+app.get('/api/dictionary/categories', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT category, COUNT(*) as count
+      FROM dictionary
+      GROUP BY category
+      ORDER BY count DESC
+    `);
+    res.json({ success: true, categories: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/dictionary/random?count=5
+app.get('/api/dictionary/random', async (req, res) => {
+  try {
+    const count = Math.min(parseInt(req.query.count) || 5, 20);
+    const result = await pool.query(
+      'SELECT id, kivira, french, english, swahili, example_kivira, example_translation_fr FROM dictionary ORDER BY RANDOM() LIMIT $1',
+      [count]
+    );
+    res.json({ success: true, words: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 
 // ===== DÉMARRAGE =====
