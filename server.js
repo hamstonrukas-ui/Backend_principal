@@ -1574,6 +1574,172 @@ app.get('/api/dictionary/random', async (req, res) => {
 });
 
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ROUTE BIBLIOTHÈQUE COMPATIBLE — accepte ?action= (ancien format)
+// ET /categories /titles /articles (nouveau format)
+// À placer dans server.js AVANT initStorage().then(...)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Route principale qui gère TOUT via ?action=
+app.get('/api/library', async (req, res) => {
+  const { action, category_id, title_id, id, lang = 'fr' } = req.query;
+  const allowed = ['fr', 'en', 'sw', 'ki'];
+  const l = allowed.includes(lang) ? lang : 'fr';
+
+  try {
+    // ── action=categories ──
+    if (!action || action === 'categories') {
+      const result = await pool.query(`
+        SELECT id, slug, icon, display_order,
+               title_${l} AS name
+        FROM lib_categories
+        WHERE is_visible = true
+        ORDER BY display_order ASC
+      `);
+      return res.json({ success: true, categories: result.rows });
+    }
+
+    // ── action=titles ──
+    if (action === 'titles') {
+      if (!category_id) return res.status(400).json({ success: false, error: 'category_id requis' });
+
+      const cat = await pool.query(
+        `SELECT id, slug, title_${l} AS name, icon FROM lib_categories WHERE id = $1 AND is_visible = true`,
+        [category_id]
+      );
+      if (!cat.rows.length) return res.status(404).json({ success: false, error: 'Catégorie introuvable' });
+
+      const titles = await pool.query(`
+        SELECT id, slug, display_order, title_${l} AS name
+        FROM lib_titles
+        WHERE category_id = $1 AND is_visible = true
+        ORDER BY display_order ASC
+      `, [category_id]);
+
+      return res.json({ success: true, category: cat.rows[0], titles: titles.rows });
+    }
+
+    // ── action=articles ──
+    if (action === 'articles') {
+      if (!title_id) return res.status(400).json({ success: false, error: 'title_id requis' });
+
+      const titleRes = await pool.query(`
+        SELECT t.id, t.slug, t.title_${l} AS name,
+               c.title_${l} AS category_name, c.id AS category_id
+        FROM lib_titles t
+        JOIN lib_categories c ON c.id = t.category_id
+        WHERE t.id = $1 AND t.is_visible = true
+      `, [title_id]);
+      if (!titleRes.rows.length) return res.status(404).json({ success: false, error: 'Titre introuvable' });
+
+      const articles = await pool.query(`
+        SELECT id, slug, display_order, author, published_at,
+               article_title_${l} AS title,
+               content_${l}        AS content
+        FROM lib_articles
+        WHERE title_id = $1 AND is_visible = true
+        ORDER BY display_order ASC
+      `, [title_id]);
+
+      return res.json({ success: true, title: titleRes.rows[0], articles: articles.rows });
+    }
+
+    // ── action=article (individuel) ──
+    if (action === 'article') {
+      if (!id) return res.status(400).json({ success: false, error: 'id requis' });
+
+      const result = await pool.query(`
+        SELECT a.id, a.slug, a.author, a.published_at,
+               a.article_title_${l} AS title,
+               a.content_${l}        AS content,
+               t.title_${l}          AS title_name, t.id AS title_id,
+               c.title_${l}          AS category_name, c.id AS category_id
+        FROM lib_articles a
+        JOIN lib_titles t     ON t.id = a.title_id
+        JOIN lib_categories c ON c.id = t.category_id
+        WHERE a.id = $1 AND a.is_visible = true
+        LIMIT 1
+      `, [id]);
+
+      if (!result.rows.length) return res.status(404).json({ success: false, error: 'Article introuvable' });
+      return res.json({ success: true, article: result.rows[0] });
+    }
+
+    return res.status(400).json({ success: false, error: `Action inconnue: ${action}` });
+
+  } catch (err) {
+    console.error('Erreur /api/library:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Routes séparées (nouveau format — gardées pour cohérence future)
+app.get('/api/library/categories', async (req, res) => {
+  req.query.action = 'categories';
+  // Rediriger vers la route principale via un appel interne simulé
+  const l = ['fr','en','sw','ki'].includes(req.query.lang) ? req.query.lang : 'fr';
+  try {
+    const result = await pool.query(`SELECT id, slug, icon, display_order, title_${l} AS name FROM lib_categories WHERE is_visible = true ORDER BY display_order ASC`);
+    res.json({ success: true, categories: result.rows });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+app.get('/api/library/titles', async (req, res) => {
+  const { category_id, lang = 'fr' } = req.query;
+  const l = ['fr','en','sw','ki'].includes(lang) ? lang : 'fr';
+  if (!category_id) return res.status(400).json({ success: false, error: 'category_id requis' });
+  try {
+    const cat = await pool.query(`SELECT id, slug, title_${l} AS name FROM lib_categories WHERE id = $1`, [category_id]);
+    const titles = await pool.query(`SELECT id, slug, display_order, title_${l} AS name FROM lib_titles WHERE category_id = $1 AND is_visible = true ORDER BY display_order ASC`, [category_id]);
+    res.json({ success: true, category: cat.rows[0], titles: titles.rows });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+app.get('/api/library/articles', async (req, res) => {
+  const { title_id, lang = 'fr' } = req.query;
+  const l = ['fr','en','sw','ki'].includes(lang) ? lang : 'fr';
+  if (!title_id) return res.status(400).json({ success: false, error: 'title_id requis' });
+  try {
+    const titleRes = await pool.query(`SELECT t.id, t.title_${l} AS name, c.title_${l} AS category_name, c.id AS category_id FROM lib_titles t JOIN lib_categories c ON c.id = t.category_id WHERE t.id = $1`, [title_id]);
+    const articles = await pool.query(`SELECT id, slug, display_order, article_title_${l} AS title, content_${l} AS content, author FROM lib_articles WHERE title_id = $1 AND is_visible = true ORDER BY display_order ASC`, [title_id]);
+    res.json({ success: true, title: titleRes.rows[0], articles: articles.rows });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// DICTIONNAIRE
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+app.get('/api/dictionary/search', async (req, res) => {
+  const { q, limit = 20 } = req.query;
+  if (!q || !q.trim()) return res.status(400).json({ success: false, error: 'Paramètre q requis' });
+  try {
+    const search = '%' + q.trim() + '%';
+    const lim = Math.min(parseInt(limit) || 20, 50);
+    const result = await pool.query(`
+      SELECT id, kivira, french, english, swahili, category, type,
+             example_kivira, example_translation_fr, example_translation_en, example_translation_sw
+      FROM dictionary
+      WHERE kivira ILIKE $1 OR french ILIKE $1 OR english ILIKE $1 OR swahili ILIKE $1
+      ORDER BY
+        CASE WHEN kivira ILIKE $2 THEN 1 WHEN french ILIKE $2 THEN 2 ELSE 3 END,
+        LENGTH(kivira) ASC
+      LIMIT $3
+    `, [search, q.trim(), lim]);
+    res.json({ success: true, query: q, count: result.rows.length, results: result.rows });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+app.get('/api/dictionary/random', async (req, res) => {
+  const count = Math.min(parseInt(req.query.count) || 5, 20);
+  try {
+    const result = await pool.query(
+      'SELECT id, kivira, french, english, swahili, example_kivira, example_translation_fr FROM dictionary ORDER BY RANDOM() LIMIT $1',
+      [count]
+    );
+    res.json({ success: true, words: result.rows });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
 
 // ===== DÉMARRAGE =====
 const PORT = process.env.PORT || 5000;
