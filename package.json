@@ -30,6 +30,6 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.1",
-    "web-push": "^3.6.7",
+    "web-push": "^3.6.7"
   }
 }
